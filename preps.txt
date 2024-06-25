@@ -1,0 +1,496 @@
+IsController:
+
+ // Métodos CRUD para Projetos
+
+        [HttpGet("projetos")]
+        
+        public IActionResult GetProjetos()
+        {
+            var projetos = _context.Projetos.ToList();
+            return Ok(projetos);
+        }
+
+        [HttpGet("projetos/{id}")]
+        public IActionResult GetProjeto(int id)
+        {
+            var projeto = _context.Projetos.Find(id);
+            if (projeto == null)
+                return NotFound();
+            return Ok(projeto);
+        }
+
+        [HttpPost("projetos")]
+        public IActionResult CreateProjeto([FromBody] Projeto projeto)
+        {
+            _context.Projetos.Add(projeto);
+            _context.SaveChanges();
+            return CreatedAtAction(nameof(GetProjeto), new { id = projeto.Id }, projeto);
+        }
+
+        [HttpPut("projetos/{id}")]
+        public IActionResult UpdateProjeto(int id, [FromBody] Projeto projeto)
+        {
+            if (id != projeto.Id)
+                return BadRequest();
+
+            _context.Entry(projeto).State = EntityState.Modified;
+            _context.SaveChanges();
+            return NoContent();
+        }
+
+        [HttpDelete("projetos/{id}")]
+        public IActionResult DeleteProjeto(int id)
+        {
+            var projeto = _context.Projetos.Find(id);
+            if (projeto == null)
+                return NotFound();
+
+            _context.Projetos.Remove(projeto);
+            _context.SaveChanges();
+            return NoContent();
+        }
+
+
+
+        [HttpGet("projetos/{id}/export/xml")]
+        public IActionResult ExportProjetoToXml(int id)
+        {
+            var projeto = _context.Projetos.Find(id);
+            if (projeto == null)
+                return NotFound();
+
+            var doc = new XDocument(
+                new XElement("projetos",
+                    new XElement("projeto",
+                        new XAttribute("idProjetos", projeto.Id),
+                        new XAttribute("nome", projeto.Nome),
+                        new XAttribute("tipo", projeto.Tipo),
+                        new XAttribute("responsavel", projeto.Responsavel)
+                    )
+                )
+            );
+
+            var xmlString = doc.ToString();
+
+            var path = Path.Combine(Directory.GetCurrentDirectory(), "Ficheiros");
+            Directory.CreateDirectory(path);
+
+            var filePath = Path.Combine(path, $"{projeto.Nome}.xml");
+            System.IO.File.WriteAllText(filePath, xmlString);
+
+            return File(new System.Text.UTF8Encoding().GetBytes(xmlString), "application/xml", $"{projeto.Nome}.xml");
+        }
+
+        [HttpGet("projetos/export/xml")]
+        public IActionResult ExportAllProjetosToXml()
+        {
+            var projetos = _context.Projetos.ToList();
+
+            var doc = new XDocument(
+                new XElement("projetos",
+                    from projeto in projetos
+                    select new XElement("projeto",
+                        new XAttribute("idProjetos", projeto.Id),
+                        new XAttribute("nome", projeto.Nome),
+                        new XAttribute("tipo", projeto.Tipo),
+                        new XAttribute("responsavel", projeto.Responsavel)
+                    )
+                )
+            );
+
+            var xmlString = doc.ToString();
+
+            var path = Path.Combine(Directory.GetCurrentDirectory(), "Ficheiros");
+            Directory.CreateDirectory(path);
+
+            var filePath = Path.Combine(path, "todos_projetos.xml");
+            System.IO.File.WriteAllText(filePath, xmlString);
+
+            return File(new System.Text.UTF8Encoding().GetBytes(xmlString), "application/xml", "todos_projetos.xml");
+        }
+
+        [HttpPost("importar-projetos")]
+        public async Task<IActionResult> ImportarProjetos(IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest("Ficheiro não pode estar vazio.");
+            }
+
+            string csvContent;
+            using (var reader = new StreamReader(file.OpenReadStream()))
+            {
+                csvContent = await reader.ReadToEndAsync();
+            }
+
+            var projetos = new List<Projeto>();
+
+            using (var reader = new StringReader(csvContent))
+            {
+                string linha;
+                while ((linha = reader.ReadLine()) != null)
+                {
+                    var valores = linha.Split(';');
+
+                    if (valores.Length >= 3)
+                    {
+                        var projeto = new Projeto
+                        {
+                            Nome = valores[0].Trim(),
+                            Tipo = valores[1].Trim(),
+                            Responsavel = valores[2].Trim()
+                        };
+
+                        projetos.Add(projeto);
+                    }
+                }
+            }
+
+            if (projetos.Any())
+            {
+                await _context.Projetos.AddRangeAsync(projetos);
+                await _context.SaveChangesAsync();
+                return Ok($"Foram importados {projetos.Count} projetos.");
+            }
+            else
+            {
+                return BadRequest("O conteúdo do CSV não contém dados válidos para importação.");
+            }
+        }
+
+
+
+/////////////////////////////////
+
+Program.cs:
+
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Threading.Tasks;
+using System.Text;
+
+
+class Program
+{
+    static async Task Main(string[] args)
+    {
+        var client = new HttpClient();
+        string token = null;
+
+        while (true)
+        {
+            Console.WriteLine("Menu:");
+            Console.WriteLine("1. Login");
+            Console.WriteLine("2. Obter dados sem Role");
+            Console.WriteLine("3. Obter dados com Role");
+            Console.WriteLine("4. Listar Projetos");
+            Console.WriteLine("5. Obter Projeto por ID");
+            Console.WriteLine("6. Criar Projeto");
+            Console.WriteLine("7. Atualizar Projeto");
+            Console.WriteLine("8. Deletar Projeto");
+            Console.WriteLine("9. 1 to xml");
+            Console.WriteLine("10. All to xml");
+            Console.WriteLine("11. Importar CSV");
+            Console.WriteLine("12. Sair");
+            Console.Write("Escolher uma opção: ");
+            var choice = Console.ReadLine();
+
+            switch (choice)
+            {
+                case "1":
+                    token = await Login(client);
+                    break;
+                case "2":
+                    await GetData(client, token, "getDataWithoutRole");
+                    break;
+                case "3":
+                    await GetData(client, token, "getDataWithRole");
+                    break;
+                case "4":
+                    await ListProjetos(client, token);
+                    break;
+                case "5":
+                    await GetProjetoById(client, token);
+                    break;
+                case "6":
+                    await CreateProjeto(client, token);
+                    break;
+                case "7":
+                    await UpdateProjeto(client, token);
+                    break;
+                case "8":
+                    await DeleteProjeto(client, token);
+                    break;
+                case "9":
+                    await ExportProjetoToXml(client, token);
+                    break;
+                case "10":
+                    await ExportAllProjetos(client, token);
+                    break;
+                case "11":
+                    await ImportarProjetos(client, token);
+                    break;
+                    
+                case "12":
+                    return;
+            }
+        }
+    }
+
+    static async Task<string> Login(HttpClient client)
+    {
+        var user = new { Username = "teste1", Password = "teste1", Role = "" };
+        var response = await client.PostAsJsonAsync("http://localhost:5064/api/Is/login", user);
+        if (response.IsSuccessStatusCode)
+        {
+            var data = await response.Content.ReadFromJsonAsync<LoginResponse>();
+            Console.WriteLine("Login successful!");
+            return data?.Token;
+        }
+        Console.WriteLine("Login failed!");
+        return null;
+    }
+
+    static async Task GetData(HttpClient client, string token, string endpoint)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        var response = await client.GetAsync($"http://localhost:5064/api/Is/{endpoint}");
+        if (response.IsSuccessStatusCode)
+        {
+            var data = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Data: {data}");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+     static async Task ListProjetos(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        var response = await client.GetAsync("http://localhost:5064/api/Is/projetos");
+        if (response.IsSuccessStatusCode)
+        {
+            var data = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Projetos: {data}");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+    static async Task GetProjetoById(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        Console.Write("Digite o ID do projeto: ");
+        var id = Console.ReadLine();
+
+        var response = await client.GetAsync($"http://localhost:5064/api/Is/projetos/{id}");
+        if (response.IsSuccessStatusCode)
+        {
+            var data = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Projeto: {data}");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+    static async Task CreateProjeto(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        Console.Write("Digite o nome do projeto: ");
+        var nome = Console.ReadLine();
+        Console.Write("Digite o tipo do projeto: ");
+        var tipo = Console.ReadLine();
+        Console.Write("Digite o responsável pelo projeto: ");
+        var responsavel = Console.ReadLine();
+
+        var projeto = new { Nome = nome, Tipo = tipo, Responsavel = responsavel };
+        var response = await client.PostAsJsonAsync("http://localhost:5064/api/Is/projetos", projeto);
+        if (response.IsSuccessStatusCode)
+        {
+            var data = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"Projeto criado: {data}");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+    static async Task UpdateProjeto(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        Console.Write("Digite o ID do projeto: ");
+        var id = Console.ReadLine();
+        Console.Write("Digite o novo nome do projeto: ");
+        var nome = Console.ReadLine();
+        Console.Write("Digite o novo tipo do projeto: ");
+        var tipo = Console.ReadLine();
+        Console.Write("Digite o novo responsável pelo projeto: ");
+        var responsavel = Console.ReadLine();
+
+        var projeto = new { Id = int.Parse(id), Nome = nome, Tipo = tipo, Responsavel = responsavel };
+        var response = await client.PutAsJsonAsync($"http://localhost:5064/api/Is/projetos/{id}", projeto);
+        if (response.IsSuccessStatusCode)
+        {
+            Console.WriteLine("Projeto atualizado com sucesso!");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+    static async Task DeleteProjeto(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        Console.Write("Digite o ID do projeto: ");
+        var id = Console.ReadLine();
+
+        var response = await client.DeleteAsync($"http://localhost:5064/api/Is/projetos/{id}");
+        if (response.IsSuccessStatusCode)
+        {
+            Console.WriteLine("Projeto deletado com sucesso!");
+        }
+        else
+        {
+            Console.WriteLine("Request failed!");
+        }
+    }
+
+
+static async Task ExportProjetoToXml(HttpClient client, string token)
+{
+    try
+    {
+        Console.Write("Digite o ID do projeto para exportar em XML: ");
+        var id = Console.ReadLine();
+
+        if (string.IsNullOrEmpty(id))
+        {
+            Console.WriteLine("ID do projeto não pode ser vazio.");
+            return;
+        }
+
+        var response = await client.GetAsync($"http://localhost:5064/api/Is/projetos/{id}/export/xml");
+        if (response.IsSuccessStatusCode)
+        {
+            var content = await response.Content.ReadAsStringAsync();
+
+            var directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Ficheiros");
+            Directory.CreateDirectory(directoryPath); // Cria a pasta se não existir
+
+            var fileName = $"projeto_{id}.xml";
+            var filePath = Path.Combine(directoryPath, fileName);
+
+            using (var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write))
+            {
+                using (var writer = new StreamWriter(fileStream, System.Text.Encoding.UTF8))
+                {
+                    await writer.WriteAsync(content);
+                }
+            }
+
+            Console.WriteLine($"Arquivo XML exportado com sucesso: {filePath}");
+        }
+        else
+        {
+            Console.WriteLine($"Falha ao exportar projeto em XML. Código de status: {response.StatusCode}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Erro ao exportar projeto em XML: {ex.Message}");
+    }
+}
+
+
+    static async Task ExportAllProjetos(HttpClient client, string token)
+    {
+        if (token != null)
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        }
+
+        var response = await client.GetAsync($"http://localhost:5064/api/Is/projetos/export/xml");
+        if (response.IsSuccessStatusCode)
+        {
+            var xml = await response.Content.ReadAsStringAsync();
+            var fileName = "Todos_Projetos.xml";
+            await File.WriteAllTextAsync(fileName, xml);
+            Console.WriteLine($"Todos os projetos exportados com sucesso para {fileName}");
+        }
+        else
+        {
+            Console.WriteLine($"Erro: {response.StatusCode}");
+        }
+    }
+
+   static async Task ImportarProjetos(HttpClient client, string token)
+{
+    if (token != null)
+    {
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    Console.Write("Introduza o nome do ficheiro CSV (sem extensão): ");
+    string fileName = Console.ReadLine();
+    string directoryPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Ficheiros");
+    string filePath = Path.Combine(directoryPath, fileName + ".csv");
+
+    if (File.Exists(filePath))
+    {
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(File.ReadAllBytes(filePath));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("multipart/form-data");
+        content.Add(fileContent, "file", Path.GetFileName(filePath));
+
+        var response = await client.PostAsync("http://localhost:5064/api/Is/importar-projetos", content);
+        if (response.IsSuccessStatusCode)
+        {
+            Console.WriteLine("Ficheiro importado com sucesso!");
+        }
+        else
+        {
+            Console.WriteLine("Falha na importação do ficheiro: " + response.ReasonPhrase);
+        }
+    }
+    else
+    {
+        Console.WriteLine("Ficheiro não encontrado: " + filePath);
+    }
+}
+
+}
+
